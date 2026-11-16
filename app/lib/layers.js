@@ -139,6 +139,30 @@ function oneOf(value, allowed, fallback) {
 }
 
 /**
+ * The label setup used to give every image layer: "Artwork (print area 1)".
+ * Every mug has a single print area, so all its image layers read the same.
+ */
+function isGenericArtworkLabel(label) {
+  return /^artwork(\s*\(print area [^)]*\))?$/i.test(toTrimmedString(label));
+}
+
+/**
+ * The layer's title. An image layer still carrying the generic artwork label
+ * takes its Gelato name instead ("Background", "Image (left)"), so layers saved
+ * before this rule read correctly without being re-seeded. A label the merchant
+ * typed is kept as it is.
+ */
+function layerLabel(raw, type) {
+  const label = toTrimmedString(raw?.label);
+
+  if (type === LAYER_TYPES.IMAGE && (!label || isGenericArtworkLabel(label))) {
+    return gelatoFieldLabel(raw?.name) || label;
+  }
+
+  return label;
+}
+
+/**
  * Normalize one layer.
  *
  * Every field is bounded, because these values are written by an admin form and
@@ -153,7 +177,7 @@ export function normalizeLayer(raw, index = 0) {
     // it is never regenerated or renamed by us.
     name: toTrimmedString(raw?.name) || `Layer ${index + 1}`,
     type,
-    label: toTrimmedString(raw?.label),
+    label: layerLabel(raw, type),
 
     x: toNumber(raw?.x, { min: -0.5, max: 1.5, fallback: DEFAULT_IMAGE_BOX.x }),
     y: toNumber(raw?.y, { min: -0.5, max: 1.5, fallback: DEFAULT_IMAGE_BOX.y }),
@@ -270,9 +294,13 @@ export function seedLayersFromTemplate(template, existing = []) {
         {
           name,
           type: LAYER_TYPES.IMAGE,
-          label: toTrimmedString(placeholder?.printArea)
-            ? `Artwork (print area ${placeholder.printArea})`
-            : "Artwork",
+          // The designer's name for the layer in Gelato. Only a generic one
+          // ("Image 3") falls back to the print area, which says little.
+          label:
+            gelatoFieldLabel(name) ||
+            (toTrimmedString(placeholder?.printArea)
+              ? `Artwork (print area ${placeholder.printArea})`
+              : "Artwork"),
           x: DEFAULT_IMAGE_BOX.x,
           y: DEFAULT_IMAGE_BOX.y,
           width,

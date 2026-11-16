@@ -154,3 +154,28 @@ test("unusable input yields an empty stack, never a crash", () => {
   assert.deepEqual(normalizeLayers("{not json"), []);
   assert.deepEqual(normalizeLayers(42), []);
 });
+
+test("image layers are titled by their Gelato name, not the print area", () => {
+  const layers = seedLayersFromTemplate({
+    placeholders: [
+      { name: "Background (fixed)", printArea: "1", width: 10, height: 5 },
+      { name: "Image (left)", printArea: "1", width: 10, height: 5 },
+      { name: "Image 3", printArea: "1", width: 10, height: 5 },
+    ],
+  });
+
+  assert.deepEqual(
+    layers.map((layer) => layer.label),
+    ["Background", "Image (left)", "Artwork (print area 1)"],
+  );
+});
+
+test("a saved generic artwork label takes the Gelato name; a typed one is kept", () => {
+  const generic = normalizeLayer({ name: "Logo (fixed)", type: "image", label: "Artwork (print area 1)" });
+  const typed = normalizeLayer({ name: "Image", type: "image", label: "Upload_your_photo" });
+  const auto = normalizeLayer({ name: "Image 2", type: "image", label: "Artwork (print area 1)" });
+
+  assert.equal(generic.label, "Logo");
+  assert.equal(typed.label, "Upload_your_photo");
+  assert.equal(auto.label, "Artwork (print area 1)");
+});
