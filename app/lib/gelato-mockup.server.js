@@ -30,6 +30,7 @@
 
 import { getGelatoConfig } from "./env.server.js";
 import { storeAsset } from "./storage.server.js";
+import { isFixedGelatoName } from "./layers.js";
 import { asArray, firstString, toTrimmedString } from "./normalize.js";
 
 const GELATO_ECOMMERCE_API = "https://ecommerce.gelatoapis.com/v1";
@@ -106,10 +107,19 @@ async function gelato(path, options = {}, fetchImpl = fetch) {
 /**
  * Which image placeholders to fill, and with what.
  *
- * A template can expose the same placeholder more than once — the 11oz mug
- * "twin image" template carries two, so the artwork has to be sent for each or
- * half the mug prints blank. Names come from the template itself; the mapping's
- * stored placeholder name is the fallback for a template we cannot read.
+ * The artwork fills EVERY image slot the design offers the customer, not only
+ * the one named on the mapping. An 11oz mug wrap carries two — `Image (left)`
+ * and `Image (right)`, the same design repeated so the mug reads from either
+ * hand — and some templates list one name twice instead. Either way, sending
+ * the artwork once leaves half the mug showing the template's own filler.
+ *
+ * What it must not fill is the design's furniture: a logo, a barcode, laurels,
+ * a fixed background. Gelato's designers mark those `(fixed)`, which
+ * `isFixedGelatoName` reads. The name test below catches the templates where
+ * that convention was not followed — several carry a bare "MagikPik logo".
+ *
+ * Names come from the template itself; the mapping's stored placeholder name
+ * is the fallback for a template we cannot read.
  */
 export function buildImagePlaceholders(
   templateVariant,
@@ -133,26 +143,24 @@ export function buildImagePlaceholders(
     mapping?.gelatoPlaceholderName || mapping?.placeholderName || "",
   );
 
-  const templateHasTarget = targetArtworkName && fromTemplate.some((name) =>
-    name === targetArtworkName || name.includes(targetArtworkName) || targetArtworkName.includes(name)
-  );
+  const candidates =
+    fromTemplate.length > 0
+      ? fromTemplate
+      : [targetArtworkName || "ImageFront"].filter(Boolean);
 
-  const names = (fromTemplate.length > 0
-    ? fromTemplate
-    : [targetArtworkName || "ImageFront"].filter(Boolean)
-  ).filter((name) => {
+  const fillable = candidates.filter((name) => {
     if (backgroundName && name === backgroundName) return true;
-    if (/bar\s*code|barcode|logo|lens/i.test(name)) return false;
+    if (isFixedGelatoName(name)) return false;
+    if (/bar\s*code|barcode|logo|lens|laurel/i.test(name)) return false;
     if (!backgroundUrl && /background|edge-to-edge/i.test(name)) return false;
-    if (templateHasTarget) {
-      return (
-        name === targetArtworkName ||
-        name.includes(targetArtworkName) ||
-        targetArtworkName.includes(name)
-      );
-    }
     return true;
   });
+
+  // Never send nothing. A template whose every slot reads as furniture is a
+  // naming accident, and a mockup request with no image fails for a reason
+  // nobody can act on. The mapped name is at least the merchant's intent.
+  const names =
+    fillable.length > 0 ? fillable : [targetArtworkName].filter(Boolean);
 
   // Deduplicated: the same placeholder listed twice must not be sent twice
   // once one of them is the background.

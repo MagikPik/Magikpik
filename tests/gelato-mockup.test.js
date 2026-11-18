@@ -48,6 +48,62 @@ test("a twin-image template gets the artwork in both placeholders", () => {
   assert.ok(placeholders.every((entry) => entry.fitMethod === "slice"));
 });
 
+/**
+ * The live MagikPik templates, which name the two halves of the wrap
+ * separately rather than repeating one name. Casing is inconsistent between
+ * templates ("Image (Right)" vs "Image (right)"), and the logo is sometimes
+ * marked "(fixed)" and sometimes not, so both shapes appear here.
+ */
+const WRAP_TEMPLATE = {
+  imagePlaceholders: [
+    { name: "Central background (fixed)", printArea: "1" },
+    { name: "MagikPik logo", printArea: "1" },
+    { name: "Image (Right)", printArea: "1" },
+    { name: "Image (left)", printArea: "1" },
+  ],
+  textPlaceholders: [],
+};
+
+test("both halves of a mug wrap get the artwork, not just the mapped one", () => {
+  // Filling only `gelatoPlaceholderName` printed the customer's design on one
+  // side and the template's filler on the other.
+  const placeholders = buildImagePlaceholders(
+    WRAP_TEMPLATE,
+    { ...MAPPING, gelatoPlaceholderName: "Image (Right)" },
+    ARTWORK,
+  );
+
+  assert.deepEqual(
+    placeholders.map((entry) => entry.name),
+    ["Image (Right)", "Image (left)"],
+  );
+  assert.ok(placeholders.every((entry) => entry.fileUrl === ARTWORK));
+});
+
+test("the design's own furniture never takes the customer's artwork", () => {
+  // A logo or a fixed background is part of the design. "(fixed)" is Gelato's
+  // convention, but several live templates carry a bare "MagikPik logo", so
+  // the name has to be read as well.
+  const names = buildImagePlaceholders(WRAP_TEMPLATE, MAPPING, ARTWORK).map(
+    (entry) => entry.name,
+  );
+
+  assert.ok(!names.includes("MagikPik logo"));
+  assert.ok(!names.includes("Central background (fixed)"));
+});
+
+test("a single-image template still gets exactly one placeholder", () => {
+  // Not every design is a twin wrap; filling "all of them" must not invent a
+  // second slot.
+  const placeholders = buildImagePlaceholders(
+    { imagePlaceholders: [{ name: "Client image" }], textPlaceholders: [] },
+    { ...MAPPING, gelatoPlaceholderName: "Client image" },
+    ARTWORK,
+  );
+
+  assert.deepEqual(placeholders.map((entry) => entry.name), ["Client image"]);
+});
+
 test("a nominated placeholder carries the background instead of the artwork", () => {
   // The mug template lists the same placeholder twice. Naming it as the
   // background must not send the artwork to it as well.
