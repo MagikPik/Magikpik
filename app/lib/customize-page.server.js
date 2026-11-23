@@ -699,6 +699,13 @@ const STYLES = `
 
 @keyframes mtcp-spin { to { transform: rotate(360deg); } }
 
+/* Each mockup view fades in as the slideshow or the arrows change it. */
+.mtcp__stage-mockup.is-entering { animation: mtcp-fade-in 0.45s ease; }
+@keyframes mtcp-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .mtcp__stage-mockup.is-entering { animation: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mtcp__spinner { animation-duration: 2s; }
 }
@@ -2390,7 +2397,13 @@ const SCRIPT = `
     if (views[0].mockup) {
       hide(ui.viewImg);
       if (ui.stage) ui.stage.classList.remove("is-viewing");
-      if (ui.mockupImg) ui.mockupImg.src = views[state.viewIndex].url;
+      if (ui.mockupImg) {
+        // Restart the fade-in for every change of view.
+        ui.mockupImg.classList.remove("is-entering");
+        void ui.mockupImg.offsetWidth;
+        ui.mockupImg.classList.add("is-entering");
+        ui.mockupImg.src = views[state.viewIndex].url;
+      }
       if (ui.viewCount) {
         ui.viewCount.textContent = state.viewIndex + 1 + " / " + views.length;
       }
@@ -2426,9 +2439,10 @@ const SCRIPT = `
     if (views.length < 2) return;
 
     stopRotating();
-    // Stepping by hand ends the slideshow, so it doesn't jump away.
-    stopMockupAutoplay();
     showView((state.viewIndex + direction + views.length) % views.length);
+    // Stepping by hand restarts the 4-second countdown from this view rather
+    // than ending the slideshow, so it never jumps away the moment after.
+    if (state.mockup) startMockupAutoplay();
   }
 
   /** Stop cycling. Any deliberate action ends it for good. */
@@ -2529,10 +2543,12 @@ const SCRIPT = `
     [ui.viewPrev, ui.viewNext, ui.viewCount].forEach(function (node) {
       if (node) node.hidden = !arrows;
     });
-    renderThumbs(arrows ? views : []);
+    // No thumbnail row on the Customize page: the mockups slide on their own,
+    // and the arrows step through them by hand.
+    renderThumbs([]);
 
-    // The mockups stay put: the customer picks a view from the thumbnails.
     stopMockupAutoplay();
+    if (arrows) startMockupAutoplay();
 
     if (!many) {
       stopRotating();
@@ -2540,6 +2556,34 @@ const SCRIPT = `
     }
 
     if (!state.mockup) startRotating();
+  }
+
+  /**
+   * Step 4's mockup slideshow: the next view every 4 seconds, wrapping round.
+   *
+   * The mockups are Gelato's finished shots, not the editable preview, so
+   * cycling them never moves anything the customer is positioning. Every view
+   * is fetched up front so each change is instant.
+   */
+  function startMockupAutoplay() {
+    var views = viewsOf();
+
+    stopMockupAutoplay();
+
+    if (!state.mockup || views.length < 2) return;
+
+    views.forEach(function (view) {
+      new Image().src = view.url;
+    });
+
+    state.mockupTimer = setInterval(function () {
+      if (!state.mockup) {
+        stopMockupAutoplay();
+        return;
+      }
+
+      showView((state.viewIndex + 1) % viewsOf().length);
+    }, 4000);
   }
 
   function stopMockupAutoplay() {
