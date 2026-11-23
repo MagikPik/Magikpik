@@ -50,6 +50,22 @@
   display: none;
 }
 
+/* Each slide fades in as it arrives; set by template-preview.js. */
+.mtcv__image--enter {
+  animation: mtcv-fade-in 0.45s ease;
+}
+
+@keyframes mtcv-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mtcv__image--enter {
+    animation: none;
+  }
+}
+
 /* Shown while the design loads, and if it ever fails to. */
 .mtcv__placeholder {
   align-items: center;

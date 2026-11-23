@@ -107,6 +107,11 @@
     this.image.onload = function () {
       show(self.image);
       hide(self.placeholder);
+
+      // Restart the fade-in on every change, not only the first.
+      self.image.classList.remove("mtcv__image--enter");
+      void self.image.offsetWidth;
+      self.image.classList.add("mtcv__image--enter");
     };
 
     this.image.onerror = function () {
@@ -192,20 +197,36 @@
     this.showSlide(list[(position + 1) % list.length]);
   };
 
+  /**
+   * (Re)start the countdown to the next slide.
+   *
+   * The state is written to `data-mtcv-autoplay` on the block, so DevTools
+   * shows at a glance whether the slider is running and, if not, why.
+   */
   Preview.prototype.startAutoplay = function startAutoplay() {
     var self = this;
 
     this.stopAutoplay();
 
-    if (!this.autoplay || this.slides().length < 2) return;
+    if (!this.autoplay) return this.setState("off:setting");
+
+    var count = this.slides().length;
+
+    if (count < 2) return this.setState("off:" + count + "-slide");
 
     for (var reason in this.pausedBy) {
-      if (this.pausedBy[reason]) return;
+      if (this.pausedBy[reason]) return this.setState("paused:" + reason);
     }
 
     this.timer = window.setInterval(function () {
       self.next();
     }, this.autoplayMs);
+
+    this.setState("running:" + count + "-slides:" + this.autoplayMs + "ms");
+  };
+
+  Preview.prototype.setState = function setState(state) {
+    this.root.setAttribute("data-mtcv-autoplay", state);
   };
 
   Preview.prototype.stopAutoplay = function stopAutoplay() {
@@ -281,27 +302,26 @@
   };
 
   /**
-   * Wire up autoplay once the strip exists. It waits while the shopper is
-   * looking at or using the gallery, and while the tab is in the background.
+   * Wire up autoplay once the strip exists.
+   *
+   * It runs on its own, with no interaction needed. There is deliberately no
+   * hover pause: the gallery fills half the page, the mouse naturally rests
+   * on it while someone watches, and the slider looked broken. Clicking a
+   * thumbnail restarts the countdown rather than stopping it. It holds only
+   * while the tab is in the background and while a keyboard user is tabbing
+   * through the thumbnails.
    */
   Preview.prototype.setupAutoplay = function setupAutoplay() {
     var self = this;
 
-    if (!this.autoplay) return;
+    if (!this.autoplay) return this.setState("off:setting");
 
-    var motion = window.matchMedia
-      ? window.matchMedia("(prefers-reduced-motion: reduce)")
-      : null;
+    // Every slide fetched up front, so each change is instant rather than a
+    // blank frame while the next photo downloads.
+    this.slides().forEach(function (button) {
+      var url = button.dataset.imageUrl || button.dataset.mtcvPhoto;
 
-    if (motion && motion.matches) return;
-
-    // A real mouse only. A tap on a phone fires an emulated mouseenter with no
-    // mouseleave to follow, which used to stop the slider after the first tap.
-    this.root.addEventListener("pointerenter", function (event) {
-      if (event.pointerType === "mouse") self.pause("hover", true);
-    });
-    this.root.addEventListener("pointerleave", function (event) {
-      if (event.pointerType === "mouse") self.pause("hover", false);
+      if (url) new Image().src = url;
     });
 
     // Keyboard focus only. Clicking a thumbnail focuses the button too, and
