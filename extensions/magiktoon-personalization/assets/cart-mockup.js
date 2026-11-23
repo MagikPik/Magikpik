@@ -138,6 +138,12 @@
    * @returns {Promise<boolean>} whether the row now carries the design.
    */
   function paint(row, url) {
+    // The app's own blocks are never a cart row. The personalisation form
+    // carries data-variant-id, which the key lookup falls back to, so on a
+    // product page whose variant was in the cart it was taken for a row and
+    // the design was drawn into it.
+    if (insideOwnBlock(row)) return Promise.resolve(false);
+
     var image = productImage(row);
     var inserted = row.querySelector("img." + INSERTED_CLASS);
 
@@ -169,6 +175,11 @@
           // The theme's photo is visible after all: one picture, not two.
           var stale = row.querySelector("img." + INSERTED_CLASS);
           if (stale) stale.remove();
+        } else if (onProductPage()) {
+          // Nothing is ever added to a product page: the cart's design
+          // thumbnail belongs in the cart.
+          resolve(false);
+          return;
         } else {
           insertThumbnail(row, url);
         }
@@ -192,6 +203,19 @@
 
       probe.src = url;
     });
+  }
+
+  /** Inside the product image block, the personalisation form or the customizer. */
+  function insideOwnBlock(node) {
+    return Boolean(
+      node &&
+        node.closest &&
+        node.closest("[data-mtc-root], [data-mtcv-root], .mtcp, [class^='mtcp__']"),
+    );
+  }
+
+  function onProductPage() {
+    return /\/products\//.test((window.location && window.location.pathname) || "");
   }
 
   /** Whether the shopper can actually see an image in the cart. */
