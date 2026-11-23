@@ -36,6 +36,14 @@
   /** Our signed asset path. Every design link on the page carries it. */
   var ASSET_PATH = "/uploads/";
 
+  /** The design thumbnail this script adds to a row that shows no image. */
+  var INSERTED_CLASS = "mtc-cart-design";
+
+  /** Containers themes commonly use for one cart line. */
+  var ROW_SELECTOR =
+    "tr, li, .cart-item, .cart__row, [class*='cart-item'], [class*='cart__item'], " +
+    "[class*='CartItem'], [class*='line-item'], [class*='line_item']";
+
   var config = window.MagikToonCart || {};
   var proxyBase = String(config.proxyBase || "/apps/magiktoon").replace(/\/+$/, "");
 
@@ -57,7 +65,9 @@
    * hardest kind of failure to notice.
    */
   function productImage(row) {
-    var images = toArray(row.querySelectorAll("img"));
+    var images = toArray(row.querySelectorAll("img")).filter(function (image) {
+      return String(image.getAttribute("class") || "").indexOf(INSERTED_CLASS) === -1;
+    });
 
     if (images.length === 0) return null;
 
@@ -87,6 +97,15 @@
    * design onto every line.
    */
   function rowFor(anchor) {
+    // A recognisable line container first. Some themes print no image in the
+    // row at all, and climbing in search of one then runs out of steps — or
+    // into the whole cart — and the line was silently skipped.
+    var line = anchor.closest ? anchor.closest(ROW_SELECTOR) : null;
+
+    if (line && line.querySelectorAll('a[href*="' + ASSET_PATH + '"]').length === 1) {
+      return line;
+    }
+
     var node = anchor.parentElement;
 
     for (var steps = 0; node && steps < 10; steps += 1) {
@@ -120,23 +139,39 @@
    */
   function paint(row, url) {
     var image = productImage(row);
-
-    if (!image) return Promise.resolve(false);
+    var inserted = row.querySelector("img." + INSERTED_CLASS);
 
     // Already ours.
-    if (image.getAttribute("data-mtc-design") === url) return Promise.resolve(true);
+    if (image && isShown(image) && image.getAttribute("data-mtc-design") === url) {
+      return Promise.resolve(true);
+    }
+
+    if (inserted && inserted.getAttribute("data-mtc-design") === url && !(image && isShown(image))) {
+      return Promise.resolve(true);
+    }
 
     return new Promise(function (resolve) {
       var probe = new Image();
 
       probe.onload = function () {
-        // srcset wins over src in every browser, so it has to go or the theme's
-        // own image comes straight back at the next resize.
-        image.removeAttribute("srcset");
-        image.removeAttribute("sizes");
+        // Re-read: the theme may have finished drawing the row meanwhile.
+        image = productImage(row);
 
-        image.src = url;
-        image.setAttribute("data-mtc-design", url);
+        if (image && isShown(image)) {
+          // srcset wins over src in every browser, so it has to go or the
+          // theme's own image comes straight back at the next resize.
+          image.removeAttribute("srcset");
+          image.removeAttribute("sizes");
+
+          image.src = url;
+          image.setAttribute("data-mtc-design", url);
+
+          // The theme's photo is visible after all: one picture, not two.
+          var stale = row.querySelector("img." + INSERTED_CLASS);
+          if (stale) stale.remove();
+        } else {
+          insertThumbnail(row, url);
+        }
 
         resolve(true);
       };
@@ -157,6 +192,55 @@
 
       probe.src = url;
     });
+  }
+
+  /** Whether the shopper can actually see an image in the cart. */
+  function isShown(image) {
+    // Zero for an image that is display:none, or inside something that is.
+    if (!image.clientWidth || !image.clientHeight) return false;
+
+    if (!window.getComputedStyle) return true;
+
+    var style = window.getComputedStyle(image);
+
+    // An empty opacity means "not reported", not "transparent".
+    return style.visibility !== "hidden" && !(style.opacity !== "" && Number(style.opacity) === 0);
+  }
+
+  /**
+   * Add the design as a thumbnail to a row that shows no picture.
+   *
+   * Some themes print no product image in the cart, or print one that stays
+   * hidden, and then there is nothing to swap — the customer saw only the
+   * design's long signed link. The thumbnail goes above the product title,
+   * where a cart line's picture is expected.
+   */
+  function insertThumbnail(row, url) {
+    var thumb = row.querySelector("img." + INSERTED_CLASS);
+
+    if (!thumb) {
+      thumb = document.createElement("img");
+      thumb.className = INSERTED_CLASS;
+      thumb.alt = "Your custom design";
+      thumb.width = 80;
+      thumb.height = 80;
+      thumb.style.cssText =
+        "display:block;width:80px;height:80px;object-fit:cover;" +
+        "border-radius:6px;margin:0 0 8px;";
+
+      var title = row.querySelector('a[href*="/products/"]');
+      var anchor = row.querySelector('a[href*="' + ASSET_PATH + '"]');
+      var before = title || anchor;
+
+      if (before && before.parentElement) {
+        before.parentElement.insertBefore(thumb, before);
+      } else {
+        row.insertBefore(thumb, row.firstChild);
+      }
+    }
+
+    thumb.src = url;
+    thumb.setAttribute("data-mtc-design", url);
   }
 
   /**
@@ -283,7 +367,10 @@
           if (!id) return false;
 
           var url = proxyBase + "/preview-image/" + encodeURIComponent(id);
-          var row = findRowByKey(item, index) || rowForItem(item);
+          // The line's own design link first: it is exact. The key lookup can
+          // fall through to the variant id, which two personalised lines of the
+          // same mug share — and both designs then landed on the first row.
+          var row = rowForItem(item) || findRowByKey(item, index);
 
           if (!row) {
             unmatched.push(item.title || item.key);
