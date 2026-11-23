@@ -67,6 +67,11 @@
     this.proxyBase = (root.dataset.proxyBase || "/apps/magiktoon").replace(/\/$/, "");
     this.showThumbnails = root.dataset.showThumbnails !== "false";
     this.sideBySide = root.dataset.sideBySide !== "false";
+    this.autoplay = root.dataset.autoplay !== "false";
+    this.autoplayMs = Math.max(2, Number(root.dataset.autoplaySeconds) || 4) * 1000;
+    this.timer = null;
+    // Reasons autoplay is held back right now; it runs only when this is empty.
+    this.pausedBy = {};
 
     this.designMode =
       root.dataset.designMode === "true" ||
@@ -124,6 +129,122 @@
     if (!this.thumbs) return;
 
     this.syncThumbnails();
+    this.markSelected(
+      this.thumbs.querySelector(
+        '.mtcv__thumb[data-mapping-id="' + chosen.mappingId + '"][data-image-index="0"]'
+      )
+    );
+  };
+
+  /**
+   * The slides autoplay moves through: every image of the selected design,
+   * then the product's own photos. Other designs are left out on purpose —
+   * their thumbnails change what gets printed, which a timer must never do.
+   */
+  Preview.prototype.slides = function slides() {
+    var self = this;
+
+    if (!this.thumbs) return [];
+
+    return queryAll(this.thumbs, ".mtcv__thumb").filter(function (button) {
+      var mappingId = button.dataset.mappingId;
+
+      return !mappingId || (self.selected && mappingId === self.selected.mappingId);
+    });
+  };
+
+  /** Show one slide large: a view of the selected design, or a product photo. */
+  Preview.prototype.showSlide = function showSlide(button) {
+    if (!button) return;
+
+    var alt = button.querySelector("img").alt;
+
+    if (button.dataset.mappingId) {
+      this.currentIndex = Number(button.dataset.imageIndex);
+      this.setImage(button.dataset.imageUrl, alt);
+    } else {
+      this.setImage(button.dataset.mtcvPhoto, alt);
+    }
+
+    this.markSelected(button);
+  };
+
+  /** Advance to the next slide, wrapping round to the first. */
+  Preview.prototype.next = function next() {
+    var list = this.slides();
+
+    if (list.length < 2) return;
+
+    var current = this.thumbs.querySelector('.mtcv__thumb[aria-checked="true"]');
+    var position = list.indexOf(current);
+
+    this.showSlide(list[(position + 1) % list.length]);
+  };
+
+  Preview.prototype.startAutoplay = function startAutoplay() {
+    var self = this;
+
+    this.stopAutoplay();
+
+    if (!this.autoplay || this.slides().length < 2) return;
+
+    for (var reason in this.pausedBy) {
+      if (this.pausedBy[reason]) return;
+    }
+
+    this.timer = window.setInterval(function () {
+      self.next();
+    }, this.autoplayMs);
+  };
+
+  Preview.prototype.stopAutoplay = function stopAutoplay() {
+    if (this.timer) window.clearInterval(this.timer);
+    this.timer = null;
+  };
+
+  /** Hold autoplay back for one reason, or release that reason. */
+  Preview.prototype.pause = function pause(reason, paused) {
+    this.pausedBy[reason] = paused;
+
+    if (paused) {
+      this.stopAutoplay();
+    } else {
+      this.startAutoplay();
+    }
+  };
+
+  /**
+   * Wire up autoplay once the strip exists. It waits while the shopper is
+   * looking at or using the gallery, and while the tab is in the background.
+   */
+  Preview.prototype.setupAutoplay = function setupAutoplay() {
+    var self = this;
+
+    if (!this.autoplay) return;
+
+    var motion = window.matchMedia
+      ? window.matchMedia("(prefers-reduced-motion: reduce)")
+      : null;
+
+    if (motion && motion.matches) return;
+
+    this.root.addEventListener("mouseenter", function () {
+      self.pause("hover", true);
+    });
+    this.root.addEventListener("mouseleave", function () {
+      self.pause("hover", false);
+    });
+    this.root.addEventListener("focusin", function () {
+      self.pause("focus", true);
+    });
+    this.root.addEventListener("focusout", function (event) {
+      if (!self.root.contains(event.relatedTarget)) self.pause("focus", false);
+    });
+    document.addEventListener("visibilitychange", function () {
+      self.pause("hidden", document.hidden);
+    });
+
+    this.startAutoplay();
   };
 
   /**
@@ -194,22 +315,17 @@
           );
         }
 
-        // Another view of the design already selected: image only.
-        if (!changingDesign) {
-          self.currentIndex = Number(button.dataset.imageIndex);
-        }
-
-        self.setImage(button.dataset.imageUrl, button.querySelector("img").alt);
-        self.markSelected(button);
+        self.showSlide(button);
         self.syncThumbnails();
+        self.startAutoplay();
 
         return;
       }
 
       // A product photo: change the view only. The design being printed is
       // unaffected, so `this.selected` is deliberately left alone.
-      self.setImage(button.dataset.mtcvPhoto, button.querySelector("img").alt);
-      self.markSelected(button);
+      self.showSlide(button);
+      self.startAutoplay();
     });
 
     this.syncThumbnails();
@@ -218,14 +334,13 @@
   /**
    * Show the thumbnails that are worth showing.
    *
-   * Whatever is currently shown large is hidden from the strip: a thumbnail of
-   * the image you are already looking at is a dead control. So the strip
-   * carries the OTHER views of the selected design — and the primary reappears
-   * in it as soon as you move to another view, which is what makes it
-   * reachable again.
+   * The strip is a slider: every view of the selected design and every product
+   * photo stays in it, and the one shown large is highlighted rather than
+   * removed — removing it made the tiles shift each time the slide changed.
    *
    * Every other design keeps only its primary, acting as the button that
-   * switches to it.
+   * switches to it. A strip with a single tile is hidden: it would only repeat
+   * the image above it.
    */
   Preview.prototype.syncThumbnails = function syncThumbnails() {
     var self = this;
@@ -241,27 +356,37 @@
         self.selected && mappingId === self.selected.mappingId;
 
       // A product photo has no mapping id; it is always available.
-      var show = !mappingId
-        ? true
-        : isSelectedDesign
-          ? index !== self.currentIndex
-          : index === 0;
+      var show = !mappingId || isSelectedDesign || index === 0;
 
       button.hidden = !show;
 
       if (show) visible += 1;
     });
 
-    this.thumbs.hidden = visible === 0;
+    this.thumbs.hidden = visible < 2;
   };
 
-  /** Highlight one thumbnail, clearing the rest. */
+  /** Highlight one thumbnail, clearing the rest, and keep it in view. */
   Preview.prototype.markSelected = function markSelected(active) {
     if (!this.thumbs) return;
 
     queryAll(this.thumbs, ".mtcv__thumb").forEach(function (button) {
       button.setAttribute("aria-checked", button === active ? "true" : "false");
     });
+
+    // Scroll the strip itself, never the page: scrollIntoView would drag the
+    // whole window to the gallery every time the slide changed.
+    if (active && !this.thumbs.hidden) {
+      var strip = this.thumbs;
+      var left =
+        active.getBoundingClientRect().left -
+        strip.getBoundingClientRect().left +
+        strip.scrollLeft;
+
+      if (left < strip.scrollLeft || left + active.offsetWidth > strip.scrollLeft + strip.clientWidth) {
+        strip.scrollTo({ left: Math.max(0, left - 8), behavior: "smooth" });
+      }
+    }
   };
 
   /**
@@ -365,6 +490,7 @@
         self.select(self.selected.mappingId);
         self.pairWithForm();
         show(self.root);
+        self.setupAutoplay();
       })
       .catch(function (error) {
         console.warn("[magiktoon] template image request failed", error);
@@ -382,6 +508,7 @@
       if (self.selected && detail.mappingId === self.selected.mappingId) return;
 
       self.select(detail.mappingId);
+      self.startAutoplay();
     });
 
     // A customer's own design is a truer preview than the blank template.
@@ -390,6 +517,9 @@
 
       if (detail.productId !== self.productId || !detail.previewUrl) return;
 
+      // For good: cycling away from the customer's own artwork would hide it.
+      self.autoplay = false;
+      self.stopAutoplay();
       self.setImage(detail.previewUrl, "Your saved design");
     });
   };

@@ -72,6 +72,14 @@
   grid-auto-columns: 88px;
   grid-auto-flow: column;
   justify-content: start;
+  /*
+   * Centred under the main image by sizing the strip to its tiles and
+   * centring the strip itself. `justify-content: center` would clip the first
+   * tiles out of reach once the strip is wider than the image; this way it
+   * simply fills the width and scrolls.
+   */
+  justify-self: center;
+  max-width: 100%;
   overflow-x: auto;
   padding-bottom: 4px;
 }

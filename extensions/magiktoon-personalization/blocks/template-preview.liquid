@@ -23,6 +23,8 @@
   data-proxy-base="{{ block.settings.proxy_base | default: '/apps/magiktoon' }}"
   data-show-thumbnails="{{ block.settings.show_thumbnails }}"
   data-side-by-side="{{ block.settings.side_by_side }}"
+  data-autoplay="{{ block.settings.autoplay }}"
+  data-autoplay-seconds="{{ block.settings.autoplay_seconds }}"
   data-design-mode="{% if request.design_mode %}true{% else %}false{% endif %}"
   {% unless request.design_mode %}hidden{% endunless %}
   {{ block.shopify_attributes }}
@@ -105,6 +107,23 @@
       "label": "Include the product's own photos in the strip",
       "info": "Off by default: the strip shows only the Gelato designs that can actually be printed.",
       "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "autoplay",
+      "label": "Play the slides automatically",
+      "info": "Moves through the images in the thumbnail strip. Pauses while the shopper hovers over the gallery, and never changes the design being printed.",
+      "default": true
+    },
+    {
+      "type": "range",
+      "id": "autoplay_seconds",
+      "label": "Seconds per slide",
+      "min": 2,
+      "max": 10,
+      "step": 1,
+      "unit": "s",
+      "default": 4
     },
     {
       "type": "checkbox",
