@@ -427,6 +427,45 @@
   };
 
   /**
+   * Drop product photos that repeat an image already in the strip.
+   *
+   * When Gelato publishes a product to Shopify it copies its mockups into the
+   * product's photos, naming each file after its Gelato image id. With the
+   * design's gallery and the product's photos both in the strip, every picture
+   * appeared twice. A photo is dropped when its file name is the id of one of
+   * the designs' images, or when it repeats an earlier photo. The designs'
+   * own tiles always stay, since they also choose what gets printed; the order
+   * of everything kept is unchanged.
+   */
+  Preview.prototype.removeDuplicatePhotos = function removeDuplicatePhotos() {
+    var known = {};
+
+    this.templates.forEach(function (option) {
+      (Array.isArray(option.imageIds) ? option.imageIds : []).forEach(function (id) {
+        if (id) known[String(id).toLowerCase()] = true;
+      });
+    });
+
+    var seen = {};
+
+    queryAll(this.thumbs, ".mtcv__thumb[data-mtcv-photo]").forEach(function (button) {
+      if (button.dataset.mtcvSaved) return;
+
+      var url = button.dataset.mtcvPhoto || "";
+      var path = url.split("?")[0];
+      var file = path.split("/").pop() || "";
+      var id = (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(file) || [""])[0].toLowerCase();
+
+      if ((id && known[id]) || seen[path]) {
+        button.remove();
+        return;
+      }
+
+      seen[path] = true;
+    });
+  };
+
+  /**
    * Show the thumbnails that are worth showing.
    *
    * The strip is a slider: every view of the selected design and every product
@@ -582,6 +621,7 @@
 
         // Build the strip first so the initial selection can highlight in it.
         self.renderThumbnails();
+        if (self.thumbs) self.removeDuplicatePhotos();
         self.select(self.selected.mappingId);
 
         // The customer's design may have arrived while this request was out;

@@ -62,6 +62,18 @@ import {
 import { asArray, toNumericShopifyId, toTrimmedString } from "./normalize.js";
 
 /**
+ * Gelato's id for one of its images, read from the image's address
+ * (`…/store_product_image/<id>/…`). Empty for an address of any other shape.
+ */
+export function gelatoImageId(url) {
+  const match = /\/store_product_image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\//i.exec(
+    toTrimmedString(url),
+  );
+
+  return match ? match[1].toLowerCase() : "";
+}
+
+/**
  * GET → the Gelato mapping for the current storefront product.
  *
  * Returns `{ ok: false, reason: "not-mapped" }` with HTTP 200 when the product
@@ -123,6 +135,11 @@ export async function storefrontMappingLoader({ request }) {
               ? `/template-image/${option.id}`
               : `/template-image/${option.id}?i=${index}`,
           );
+          // Gelato's id for each image, in the same order. When Gelato
+          // publishes to Shopify it names the product's photo file after this
+          // id, so the product page can tell its own photos apart from these
+          // and not show the same picture twice. Empty where not known.
+          mapping.imageIds = images.map(gelatoImageId);
         }
       } catch (error) {
         // Keep the stored count rather than dropping the design entirely.
