@@ -27,6 +27,17 @@
     if (node) node.hidden = true;
   }
 
+  /** Whether focus arrived from the keyboard rather than a click or tap. */
+  function isKeyboardFocus(node) {
+    try {
+      return node.matches(":focus-visible");
+    } catch (unsupported) {
+      // Browsers too old for :focus-visible: never pause on focus, so the
+      // slider cannot get stuck. Hover still pauses it.
+      return false;
+    }
+  }
+
   /**
    * The image URL for one design.
    *
@@ -214,6 +225,62 @@
   };
 
   /**
+   * Put the customer's own saved design at the front of the slider and show it.
+   *
+   * It used to replace the image and switch autoplay off for good — and since
+   * the saved design is restored from the browser on every visit, anyone who
+   * had customized the product once never saw the slider move again. As the
+   * first slide it is what the customer sees on arrival, and the cycle keeps
+   * coming back to it.
+   */
+  Preview.prototype.addSavedSlide = function addSavedSlide(url) {
+    var self = this;
+
+    if (!this.thumbs) {
+      this.setImage(url, "Your saved design");
+      return;
+    }
+
+    var button = this.thumbs.querySelector("[data-mtcv-saved]");
+
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = "mtcv__thumb";
+      button.setAttribute("role", "radio");
+      button.setAttribute("aria-checked", "false");
+      button.dataset.mtcvSaved = "true";
+
+      var image = document.createElement("img");
+      image.className = "mtcv__thumb-image";
+      image.alt = "Your saved design";
+      image.width = 160;
+      image.height = 160;
+
+      // A preview minted against an old tunnel no longer resolves: drop the
+      // slide rather than cycle onto a broken image.
+      image.onerror = function () {
+        var wasShowing = button.getAttribute("aria-checked") === "true";
+
+        button.remove();
+        self.syncThumbnails();
+        if (wasShowing) self.showSlide(self.slides()[0]);
+        self.startAutoplay();
+      };
+
+      button.appendChild(image);
+      this.thumbs.insertBefore(button, this.thumbs.firstChild);
+    }
+
+    button.dataset.mtcvPhoto = url;
+    button.querySelector("img").src = url;
+
+    this.showSlide(button);
+    this.syncThumbnails();
+    this.startAutoplay();
+  };
+
+  /**
    * Wire up autoplay once the strip exists. It waits while the shopper is
    * looking at or using the gallery, and while the tab is in the background.
    */
@@ -228,14 +295,20 @@
 
     if (motion && motion.matches) return;
 
-    this.root.addEventListener("mouseenter", function () {
-      self.pause("hover", true);
+    // A real mouse only. A tap on a phone fires an emulated mouseenter with no
+    // mouseleave to follow, which used to stop the slider after the first tap.
+    this.root.addEventListener("pointerenter", function (event) {
+      if (event.pointerType === "mouse") self.pause("hover", true);
     });
-    this.root.addEventListener("mouseleave", function () {
-      self.pause("hover", false);
+    this.root.addEventListener("pointerleave", function (event) {
+      if (event.pointerType === "mouse") self.pause("hover", false);
     });
-    this.root.addEventListener("focusin", function () {
-      self.pause("focus", true);
+
+    // Keyboard focus only. Clicking a thumbnail focuses the button too, and
+    // that focus outlives the mouse leaving — it used to hold the slider still
+    // until the shopper happened to click somewhere else on the page.
+    this.root.addEventListener("focusin", function (event) {
+      if (isKeyboardFocus(event.target)) self.pause("focus", true);
     });
     this.root.addEventListener("focusout", function (event) {
       if (!self.root.contains(event.relatedTarget)) self.pause("focus", false);
@@ -258,7 +331,9 @@
 
     if (!this.thumbs || !this.showThumbnails) return;
 
-    var first = this.thumbs.firstChild;
+    // Designs go after the customer's own design, if it arrived first, and
+    // before the product photos.
+    var first = this.thumbs.querySelector(".mtcv__thumb:not([data-mtcv-saved])");
 
     this.templates.forEach(function (option, index) {
       var label =
@@ -488,6 +563,12 @@
         // Build the strip first so the initial selection can highlight in it.
         self.renderThumbnails();
         self.select(self.selected.mappingId);
+
+        // The customer's design may have arrived while this request was out;
+        // it stays the image shown first.
+        var saved = self.thumbs && self.thumbs.querySelector("[data-mtcv-saved]");
+        if (saved) self.showSlide(saved);
+
         self.pairWithForm();
         show(self.root);
         self.setupAutoplay();
@@ -517,10 +598,7 @@
 
       if (detail.productId !== self.productId || !detail.previewUrl) return;
 
-      // For good: cycling away from the customer's own artwork would hide it.
-      self.autoplay = false;
-      self.stopAutoplay();
-      self.setImage(detail.previewUrl, "Your saved design");
+      self.addSavedSlide(detail.previewUrl);
     });
   };
 
