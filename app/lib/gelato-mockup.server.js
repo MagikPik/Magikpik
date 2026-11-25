@@ -28,6 +28,7 @@
  *      other customer file (NFR-09).
  */
 
+import { createHash } from "node:crypto";
 import { getGelatoConfig } from "./env.server.js";
 import { storeAsset } from "./storage.server.js";
 import { isFixedGelatoName } from "./layers.js";
@@ -652,7 +653,11 @@ export async function renderGelatoMockup(
 
     // Download and store each available mockup in parallel
     console.log(`[MOCKUP-STEP 5/5] 📥 Found ${candidateUrls.length} candidate mockup URLs from Gelato, downloading & storing in parallel...`);
-    const storedMockups = (
+    // Gelato can list the same picture under two URLs (the product image and
+    // the variant image), so de-duplicating by URL alone stored and showed it
+    // twice. Compare the bytes instead: the first copy wins, and candidates are
+    // in primary-first order, so the primary is always kept.
+    const downloaded = (
       await Promise.all(
         candidateUrls.map(async (item, idx) => {
           try {
@@ -661,21 +666,46 @@ export async function renderGelatoMockup(
             if (response.ok) {
               const buffer = Buffer.from(await response.arrayBuffer());
               const mimeType = response.headers?.get?.("content-type") || "image/jpeg";
-              const key = await store(buffer, {
-                mimeType: mimeType.includes("png") ? "image/png" : "image/jpeg",
-                prefix: `mockups/${toTrimmedString(shop).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
-              });
-              console.log(`  ✅ Successfully saved mockup #${idx + 1} to storage: ${key}`);
               return {
-                key,
+                buffer,
+                hash: createHash("sha256").update(buffer).digest("hex"),
                 mimeType,
                 isPrimary: item.isPrimary,
+                idx,
               };
             } else {
               console.warn(`  ⚠️ Gelato CDN answered HTTP ${response.status} for mockup #${idx + 1}`);
             }
           } catch (err) {
-            console.warn(`  ❌ Failed to fetch/store mockup #${idx + 1}:`, err.message);
+            console.warn(`  ❌ Failed to fetch mockup #${idx + 1}:`, err.message);
+          }
+          return null;
+        }),
+      )
+    ).filter(Boolean);
+
+    const seenHashes = new Set();
+    const uniqueDownloads = downloaded.filter((item) => {
+      if (seenHashes.has(item.hash)) {
+        console.log(`  ↪ Skipping mockup #${item.idx + 1}: identical image already kept`);
+        return false;
+      }
+      seenHashes.add(item.hash);
+      return true;
+    });
+
+    const storedMockups = (
+      await Promise.all(
+        uniqueDownloads.map(async (item) => {
+          try {
+            const key = await store(item.buffer, {
+              mimeType: item.mimeType.includes("png") ? "image/png" : "image/jpeg",
+              prefix: `mockups/${toTrimmedString(shop).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+            });
+            console.log(`  ✅ Successfully saved mockup #${item.idx + 1} to storage: ${key}`);
+            return { key, mimeType: item.mimeType, isPrimary: item.isPrimary };
+          } catch (err) {
+            console.warn(`  ❌ Failed to store mockup #${item.idx + 1}:`, err.message);
           }
           return null;
         }),

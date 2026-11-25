@@ -41,7 +41,6 @@ import { markPreviewCorner, watermarkArtworkDataUrl } from "./watermark.server.j
 import { getCustomization, saveCustomization, storeImage } from "./customizations.server.js";
 import { generateArtwork } from "./generation.server.js";
 import { renderGelatoMockup } from "./gelato-mockup.server.js";
-import { renderMugWrapPreviews } from "./mug-wrap-preview.server.js";
 import {
   FULFILMENT_TTL_MS,
   buildSignedAssetUrl,
@@ -517,21 +516,6 @@ const mockupJobs = new Map();
 const MOCKUP_JOB_TTL_MS = 15 * 60 * 1000;
 const MAX_SYNCHRONOUS_WAIT_MS = 25000;
 
-/**
- * How long the first click waits for the wrapped stand-in previews.
- *
- * Shopify gives an app proxy request about 60 seconds before it answers the
- * customer with its own 504, and that budget covers everything below. The
- * wrap render is not cheap: it loads every template view, reads the artwork,
- * composites each view with sharp and stores the results — about nineteen
- * round-trips to object storage once assets stopped living on local disk.
- * Awaiting it without a bound spent the whole budget and returned nothing,
- * which the storefront reports as "the preview could not be created".
- *
- * Bounded, a slow render simply misses this response: the work carries on in
- * the background and the browser's next poll picks it up.
- */
-const WRAP_PREVIEW_WAIT_MS = 12000;
 
 /**
  * POST → render a Gelato mockup of the generated artwork (Milestone 5).
@@ -696,8 +680,7 @@ export async function storefrontMockupAction({ request }) {
           timeoutMs: 300000,
         }, { store: storeMarkedPreview });
 
-        // This job is only ever Gelato's own render; the wrapped stand-ins are
-        // served separately and never presented as the live result.
+        // This job is only ever Gelato's own render.
         if (!result.ok || !asArray(result.mockups).length) {
           console.warn(`[MOCKUP-ACTION] ⚠️ Gelato render did not complete: ${result.code || ""} ${result.error || "no mockups"}`);
           jobEntry.status = "ERROR";
@@ -752,52 +735,8 @@ export async function storefrontMockupAction({ request }) {
     job = jobEntry;
   }
 
-  // The click itself (not a follow-up poll) answers within seconds: the
-  // customer's design wrapped onto Gelato's own mockup photos, while the live
-  // Gelato render carries on in the background. The browser keeps polling and
-  // swaps the live render in when it lands.
-  if (job.status !== "SUCCESS") {
-    if (!job.previews) {
-      job.previews = renderMugWrapPreviews({
-        shop: auth.shop,
-        mapping,
-        artworkKey: log.outputAssetId,
-        textValues: body?.text,
-        variantId: previewVariantId,
-      }, { store: storeMarkedPreview }).catch((error) => {
-        console.warn("[MOCKUP-ACTION] wrap previews failed:", error?.message);
-        return [];
-      });
-    }
-
-    // Bounded: see WRAP_PREVIEW_WAIT_MS. `job.previews` keeps running when the
-    // race is lost, so a render that is merely slow still reaches the next
-    // poll rather than being thrown away and started again.
-    const rendered = await Promise.race([
-      job.previews,
-      new Promise((resolve) => {
-        setTimeout(() => resolve(null), WRAP_PREVIEW_WAIT_MS).unref?.();
-      }),
-    ]);
-
-    const previews = asArray(rendered).map((item) => ({
-      url: buildSignedAssetUrl(item.key, { baseUrl: appBaseUrl }),
-      key: item.key,
-      approximate: true,
-    }));
-
-    if (previews.length > 0) {
-      return storefrontJson({
-        ok: true,
-        approximate: true,
-        pending: job.status === "RUNNING",
-        mockup: previews[0].url,
-        mockupKey: previews[0].key,
-        mockups: previews,
-      });
-    }
-  }
-
+  // Only Gelato's own render is ever shown to the customer. The browser keeps
+  // polling this endpoint until that render is ready.
   const outcome = await Promise.race([
     job.promise,
     new Promise((resolve) => setTimeout(() => resolve({ pending: true }), 15000)),

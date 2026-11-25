@@ -1449,8 +1449,7 @@ const SCRIPT = `
     if (!ui.previewProgress) return;
 
     var startedAt = Date.now();
-    // The wrapped views come back in a few seconds; Gelato's live render
-    // follows separately and does not hold this bar up.
+    // Gelato's render is what the bar waits for.
     var expected = 8000;
 
     ui.previewProgress.hidden = false;
@@ -2658,29 +2657,24 @@ const SCRIPT = `
     // Gelato renders asynchronously, often for longer than the app proxy will
     // hold a request open. The server keeps the render running and answers
     // "pending"; asking again with the same body collects the same render.
-    // With acceptStandIn, the wrapped stand-in views end the wait too.
-    function pollLiveRender(acceptStandIn) {
+    function pollLiveRender() {
       return post(true).catch(stillWorking).then(function (payload) {
-        if (payload && payload.ok && payload.pending && !(acceptStandIn && payload.mockup)) {
+        if (payload && payload.ok && payload.pending) {
           if (Date.now() > pollDeadline || token !== state.mockupToken) {
             return { ok: false, error: "The preview is taking too long. Please try again." };
           }
           return new Promise(function (resolve) {
             window.setTimeout(resolve, 3000);
-          }).then(function () { return pollLiveRender(acceptStandIn); });
+          }).then(function () { return pollLiveRender(); });
         }
         return payload;
       });
     }
 
-    /** Put a set of mockups in the slider on the left. Resolves once shown. */
-    function showMockups(payload, live) {
+    /** Put Gelato's mockups in the slider on the left. Resolves once shown. */
+    function showMockups(payload) {
       var urls = (payload.mockups || []).map(function (item) { return item.url; });
       if (urls.length === 0) urls = [payload.mockup];
-
-      // The live render replaces the wrapped stand-ins rather than joining
-      // them: kept, every angle appeared twice in the thumbnails, half of them
-      // approximations on Gelato's stock photos.
 
       return new Promise(function (resolve) {
         var resolved = false;
@@ -2692,8 +2686,7 @@ const SCRIPT = `
           state.mockup = {
             url: urls[0],
             key: payload.mockupKey,
-            views: urls,
-            approximate: !live
+            views: urls
           };
 
           stopRotating();
@@ -2707,11 +2700,9 @@ const SCRIPT = `
           enableControls(false);
 
           if (ui.mockupNote) {
-            ui.mockupNote.textContent = live
-              ? "This is the actual product preview from our print partner. " +
-                "It is exactly what will be printed."
-              : "A preview of your design on the product. " +
-                "Our print partner's own render will appear here when it is ready.";
+            ui.mockupNote.textContent =
+              "This is the actual product preview from our print partner. " +
+              "It is exactly what will be printed.";
             show(ui.mockupNote);
           }
           // A saved design no longer matches what is on screen.
@@ -2741,29 +2732,13 @@ const SCRIPT = `
       });
     }
 
-    /** Swap Gelato's live render in quietly, whenever it lands. */
-    function awaitLiveRender() {
-      pollLiveRender()
-        .then(function (payload) {
-          if (!payload || !payload.ok || !payload.mockup || payload.approximate) {
-            console.warn("[magiktoon] live render unavailable", payload && payload.error);
-            return;
-          }
-          if (!stillCurrent()) return;
-          showMockups(payload, true);
-        })
-        .catch(function (error) {
-          console.warn("[magiktoon] live render polling failed", error);
-        });
-    }
-
     post(false)
       .catch(stillWorking)
       .then(function (payload) {
-        // No preview yet (no wrapped views for this product, or the click went
-        // unanswered): poll until the stand-ins or the live render arrive.
-        if (payload && payload.ok && payload.pending && !payload.mockup) {
-          return pollLiveRender(true);
+        // Gelato's render is still running, or the click went unanswered: keep
+        // polling until it arrives.
+        if (payload && payload.ok && payload.pending) {
+          return pollLiveRender();
         }
         return payload;
       })
@@ -2782,7 +2757,7 @@ const SCRIPT = `
           return;
         }
 
-        return showMockups(payload, !payload.approximate).then(function (shown) {
+        return showMockups(payload).then(function (shown) {
           if (!shown) {
             setError(
               "Your preview was created but the image didn't load. " +
@@ -2794,8 +2769,6 @@ const SCRIPT = `
           previewSucceeded = true;
           setSuccess("Your product preview is ready.");
           stopPreviewProgress(true);
-
-          if (payload.approximate && payload.pending) awaitLiveRender();
         });
       })
       .catch(function (error) {
