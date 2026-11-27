@@ -7,6 +7,7 @@ const PRODUCTS_QUERY = `#graphql
         handle
         status
         productType
+        tags
         featuredImage {
           url
           altText
@@ -27,6 +28,15 @@ const PRODUCTS_QUERY = `#graphql
     }
   }
 `;
+
+// Temporary products the app creates at Gelato to render customer previews.
+// Gelato syncs them to the store, so they must be hidden from the merchant's list.
+function isPreviewProduct(product) {
+  const title = String(product?.title || "");
+  const tags = Array.isArray(product?.tags) ? product.tags : [];
+
+  return tags.includes("magiktoon-preview") || title.startsWith("MagikToon preview");
+}
 
 export async function listShopifyProducts(admin) {
   const products = [];
@@ -62,7 +72,7 @@ export async function listShopifyProducts(admin) {
       );
     }
 
-    products.push(...connection.nodes);
+    products.push(...connection.nodes.filter((product) => !isPreviewProduct(product)));
 
     after = connection.pageInfo.hasNextPage
       ? connection.pageInfo.endCursor
